@@ -1,6 +1,6 @@
 # @File : map_generation.py
 # author: Hou Chenfei
-# Time：2026-12-19
+# Time：2025-12-19
 # -*- coding: UTF-8 -*-
 
 import random
@@ -115,4 +115,5 @@ if __name__ == "__main__":
         cols=20,
         obstacles=120
     )
+
 
