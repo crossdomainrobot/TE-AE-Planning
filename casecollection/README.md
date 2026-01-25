@@ -1,0 +1,1 @@
+Among the two files mentioned above, casecollection.py is a simple example, while initialexample.py is merely an empty framework written by an LLM. To run casecollection.py, an API key must be provided.
