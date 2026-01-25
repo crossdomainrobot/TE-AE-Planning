@@ -30,7 +30,6 @@ if not API_KEY_B:
 client_a = OpenAI(api_key=API_KEY_A, base_url=BASE_URL)
 client_b = OpenAI(api_key=API_KEY_B, base_url=BASE_URL)
 
-
 SYSTEM_PROMPT_A = (
     """Terrestrial-aerial cross-domain robotics possesses cross-domain mobility capabilities, 
 enabling it to fly at different altitudes as well as travel on the ground. Compared with aerial flight, 
@@ -73,6 +72,8 @@ SYSTEM_PROMPT_B = (
     "guiding regions. You only need to output exactly five coordinates,"
     "separated by commas."
 )
+
+
 def resolve_map_file(path_str: str) -> Path:
     p = Path(path_str)
     if p.exists() and p.is_file():
@@ -124,7 +125,7 @@ def _extract_braced_block(text: str, start_brace_pos: int) -> Tuple[str, int]:
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
-                    return text[start_brace_pos : i + 1], i + 1
+                    return text[start_brace_pos: i + 1], i + 1
         i += 1
 
     raise ValueError("Unbalanced braces: cannot find matching '}'")
@@ -282,8 +283,7 @@ def _free_at_h(height_mat: List[List[float]], r: int, c: int, h: float) -> bool:
     return h >= height_mat[r][c]
 
 
-def _bfs_from_start(height_mat: List[List[float]], h: float,
-                    start_rc: Tuple[int, int]) -> Set[Tuple[int, int]]:
+def _bfs_from_start(height_mat: List[List[float]], h: float, start_rc: Tuple[int, int]) -> Set[Tuple[int, int]]:
     rows, cols = len(height_mat), len(height_mat[0])
     sr, sc = start_rc
     if not _free_at_h(height_mat, sr, sc, h):
@@ -365,35 +365,30 @@ def parse_five_coords_from_b_output(b_output: str) -> List[Tuple[int, int]]:
     return coords
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Map-indexed A->B prompting script + minimal connectivity heights.")
-    parser.add_argument(
-        "--map_index",
-        type=int,
-        default=None,
-        help="地图索引，例如 10 表示读取 map10 的 data 与 height。",
-    )
-    parser.add_argument(
-        "--map_path",
-        type=str,
-        default=MAP_FILE_PATH,
-        help="地图文件路径（.text/.txt 或无后缀）。",
-    )
-    args = parser.parse_args()
+def _check_on_line_and_monotonic(points_rc: List[Tuple[int, int]], rows: int, cols: int) -> Tuple[bool, bool, bool]:
+    if rows <= 1 or cols <= 1:
+        on_line = all((r == 0 and c == 0) for r, c in points_rc)
+    else:
+        on_line = True
+        for r, c in points_rc:
+            if r * (cols - 1) != c * (rows - 1):
+                on_line = False
+                break
 
-    if args.map_index is None:
-        try:
-            raw = input("Input  map index：").strip()
-            args.map_index = int(raw)
-        except Exception as e:
-            raise RuntimeError("Invalid map_index input. Please input an integer.") from e
+    prev = -1
+    monotonic = True
+    for r, c in points_rc:
+        d2 = r * r + c * c
+        if d2 <= prev:
+            monotonic = False
+            break
+        prev = d2
 
-    map_file = resolve_map_file(args.map_path)
-    print(f"Using map text file: {map_file}")
+    return on_line, monotonic, (on_line and monotonic)
 
-    maps = load_maps_from_textfile(map_file)
 
-    data_matrix, height_matrix_raw = get_map_matrices(maps, args.map_index)
+def run_one_map(maps: Dict[int, Dict[str, Any]], map_index: int) -> None:
+    data_matrix, height_matrix_raw = get_map_matrices(maps, map_index)
     height_matrix = _to_float_matrix(height_matrix_raw)
 
     rows, cols = len(height_matrix), len(height_matrix[0])
@@ -407,6 +402,7 @@ def main():
         {"role": "user", "content": user_input},
     ]
 
+    print(f"\n==================== map{map_index} ====================")
     print("========== Model A (stream) ==========")
     a_output = stream_chat_completion(
         client=client_a,
@@ -458,6 +454,40 @@ def main():
         print(f"[{i}] B_coord={coord} -> rc={rc} : min_connected_height = {hmin}")
 
     print("\nSum of minimal connected heights (excluding None) =", total_sum)
+
+    on_line, monotonic, ok = _check_on_line_and_monotonic(per_point_rc, rows=rows, cols=cols)
+    print("On start-goal line =", on_line)
+    print("Strictly farther from start each step =", monotonic)
+    print("Line-and-continuity check =", ok)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Map-indexed A->B prompting script + minimal connectivity heights.")
+    parser.add_argument(
+        "--map_path",
+        type=str,
+        default=MAP_FILE_PATH,
+        help="地图文件路径（.text/.txt 或无后缀）。",
+    )
+    args = parser.parse_args()
+
+    map_file = resolve_map_file(args.map_path)
+    print(f"Using map text file: {map_file}")
+
+    maps = load_maps_from_textfile(map_file)
+
+    idx = 1
+    ran_any = False
+    while True:
+        if idx not in maps:
+            break
+        run_one_map(maps, idx)
+        ran_any = True
+        idx += 1
+
+    if not ran_any:
+        available = sorted(maps.keys())
+        raise RuntimeError(f"No map starting from index 1. Available indices (first 20): {available[:20]} (total {len(available)})")
 
 
 if __name__ == "__main__":
